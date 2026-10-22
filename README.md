@@ -1,10 +1,40 @@
 # Amazon product watcher
 
-Python 3.10+ on Linux/macOS. Supports Amazon Japan, whole JPY, one ASIN,
+Python 3.10+ on Windows 10/11, Linux, or macOS. Supports Amazon Japan, whole JPY, one ASIN,
 quantity one. Dry-run is enabled by default. No final-order submission code,
 CAPTCHA handling, queue bypass, or anti-bot bypass is included.
 
-## Setup
+## Windows setup
+
+Download and extract the [Windows branch ZIP](https://github.com/ginhikari/amazon-watcher/archive/refs/heads/windows.zip).
+Install Python 3.10+ from python.org (including the Python launcher).
+Open Command Prompt in the extracted folder and run:
+
+```bat
+py -3 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m playwright install chromium
+```
+
+Edit `config.py` in a text editor to set the product URL, ASIN, and price limits.
+Leave `DRY_RUN = True` for your first run. Double-click `run-windows.cmd`,
+or run it from Command Prompt. It uses its own folder regardless of where it
+is launched and keeps the window open after exit. No administrator access or
+PowerShell execution-policy changes are needed.
+
+Run tests with `.venv\Scripts\python.exe -m unittest discover -s tests -v`.
+Use a local writable folder, not a network share or cloud-synced directory.
+When migrating an existing watcher, stop it first and copy `data/state.json`
+to this folder before starting; do not run both versions concurrently. Log in
+again on Windows rather than copying a browser profile between operating systems.
+
+Windows uses a nonblocking one-byte `msvcrt` lock; Linux/macOS uses `flock`.
+Both retain the lock file and release the operating-system lock on process exit.
+State files use UTF-8, flush to disk, and atomically replace the destination.
+Directory fsync is performed only on Unix because Windows does not support it
+through this API. Keep state backups to protect purchase history.
+
+## Linux/macOS setup
 
 ```sh
 cd amazon-watcher

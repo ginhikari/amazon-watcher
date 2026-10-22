@@ -13,7 +13,7 @@ class StateStore:
         if not self.path.exists():
             return PurchaseState()
         try:
-            data = json.loads(self.path.read_text())
+            data = json.loads(self.path.read_text(encoding='utf-8'))
             if set(data) != {'purchased_asins', 'attempting_purchase'}:
                 raise ValueError('Unexpected state fields')
             if not isinstance(data['purchased_asins'], list) or any(not isinstance(x, str) for x in data['purchased_asins']):
@@ -28,16 +28,19 @@ class StateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(dir=self.path.parent, prefix='.state-')
         try:
-            with os.fdopen(fd, 'w') as stream:
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
                 json.dump(vars(state), stream, indent=2)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(name, self.path)
-            directory = os.open(self.path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
+            # Windows cannot open directories with os.open for fsync. The file
+            # itself is flushed above before the same-directory atomic replace.
+            if os.name != 'nt':
+                directory = os.open(self.path.parent, os.O_RDONLY)
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
         finally:
             if os.path.exists(name):
                 os.unlink(name)
@@ -73,15 +76,33 @@ class StateStore:
 
     @contextmanager
     def exclusive(self):
-        # Kernel lock is released on process exit; do not delete its inode.
-        import fcntl
+        # Keep the inode and lock byte: removing the file can defeat mutual exclusion.
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with open(str(self.path) + '.lock', 'a') as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise SafetyError('Another watcher is running') from exc
-            try:
-                yield
-            finally:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+        with open(str(self.path) + '.lock', 'a+b') as lock:
+            if os.name == 'nt':
+                import msvcrt
+                # msvcrt locks a byte range, starting at the current file position.
+                lock.seek(0, os.SEEK_END)
+                if lock.tell() == 0:
+                    lock.write(b'\0')
+                    lock.flush()
+                lock.seek(0)
+                try:
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                except OSError as exc:
+                    raise SafetyError('Cannot acquire purchase lock; another watcher may be running') from exc
+                try:
+                    yield
+                finally:
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError as exc:
+                    raise SafetyError('Another watcher is running') from exc
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock, fcntl.LOCK_UN)

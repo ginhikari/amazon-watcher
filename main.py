@@ -1,5 +1,6 @@
 import logging
 import time
+import sys
 from config import Config
 from state import StateStore
 from models import Phase, StateMachine, SafetyError
@@ -71,6 +72,10 @@ def watch(page, config, store, machine):
         time.sleep(config.check_interval_seconds)
 
 def main():
+    # Windows legacy console encodings may not represent Japanese prices.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='backslashreplace')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     try:
         config = Config()
